@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>SGT v40 - ADIF Málaga (Incluye OUIGO)</title>
+    <style>
+        :root { --verde: #13ab63; --amarillo: #f5f9ad; --azul: #d8e5f3; --rojo: #d00; --ouigo: #e6007e; }
+        body { background: #000; margin: 0; font-family: 'Arial Narrow', sans-serif; overflow: hidden; }
+        .header { background: #4a545e; color: white; padding: 10px 30px; display: flex; justify-content: space-between; align-items: center; border-bottom: 5px solid var(--verde); height: 80px; }
+        #board { height: calc(100vh - 105px); transition: background 0.8s; }
+        .modo-SALIDAS { background: var(--amarillo); color: #004534; }
+        .modo-LLEGADAS { background: var(--azul); color: #003366; }
+        .grid { display: grid; grid-template-columns: 140px 1fr 160px 140px 100px 280px; text-align: center; align-items: center; padding: 0 10px; }
+        .grid-h { background: rgba(0,0,0,0.15); padding: 15px 10px; font-weight: bold; font-size: 22px; border-bottom: 2px solid var(--verde); }
+        .row { height: 110px; border-bottom: 2px solid rgba(0,0,0,0.05); font-weight: bold; }
+        .hora-v { font-size: 38px; }
+        .destino-v { text-align: left; padding-left: 20px; }
+        .ciudad { font-size: 40px; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .tren-v { font-size: 24px; color: white; padding: 5px 10px; border-radius: 4px; display: inline-block; text-transform: uppercase; }
+        .via-v { font-size: 55px; color: var(--rojo); }
+        .obs-v { font-size: 26px; }
+        .blink { animation: b 1s infinite; color: var(--rojo); }
+        @keyframes b { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+        #activador { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.9); color: white; z-index: 9999; display: flex; justify-content: center; align-items: center; font-size: 28px; cursor: pointer; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div id="activador" onclick="this.style.display='none'">
+    SISTEMA ADIF MÁLAGA v40<br>
+    <span style="font-size:18px; opacity:0.7">Operador OUIGO Añadido</span><br><br>
+    HAGA CLIC PARA INICIAR
+</div>
+
+<div class="header">
+    <div>
+        <div id="est_name" style="font-size:32px; font-weight:bold; color:var(--amarillo)">Málaga María Zambrano</div>
+        <div id="mode_label" style="font-size:20px;">AUTOMÁTICO</div>
+    </div>
+    <div id="clock" style="font-size:50px; font-family:monospace; font-weight: bold;">00:00:00</div>
+    <div style="font-size:55px; font-weight:900; font-style:italic; color:white">adif</div>
+</div>
+
+<div id="board">
+    <div class="grid grid-h">
+        <div>HORA</div><div id="col_name">DESTINO / PROCEDENCIA</div><div>TREN</div><div>NÚMERO</div><div>VÍA</div><div>OBSERVACIONES</div>
+    </div>
+    <div id="rows"></div>
+</div>
+
+<script>
+    const DB_NAME = 'ADIF_ULTIMATE_V20';
+    // Colores actualizados incluyendo OUIGO
+    const trainColors = {
+        'AVE':'#0056b3',
+        'AVLO':'#fe5b00',
+        'IRYO':'#b30000',
+        'OUIGO':'#e6007e', 
+        'ALVIA':'#00843d',
+        'AVANT':'#00a1df',
+        'MD':'#f39c12'
+    };
+    
+    let isSpeaking = false;
+
+    async function playSequence(files) {
+        for (const file of files) {
+            await new Promise((resolve) => {
+                const audio = new Audio(`audio/${file}.wav`);
+                audio.onended = resolve;
+                audio.onerror = () => resolve();
+                audio.play().catch(() => resolve());
+            });
+        }
+    }
+
+    async function triggerPA(t, flag) {
+        if (isSpeaking) return;
+        isSpeaking = true;
+
+        let db = JSON.parse(localStorage.getItem(DB_NAME));
+        const idx = db.trains.findIndex(x => x.id === t.id);
+        if (idx !== -1) {
+            db.trains[idx][flag] = true;
+            localStorage.setItem(DB_NAME, JSON.stringify(db));
+        }
+
+        const [h, m] = t.hora.split(':').map(Number);
+        const audioLugar = t.dest.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, '_');
+        const audioLogo = t.logo.toLowerCase().trim();
+        const numVia = t.via.toString().trim() || "sin_via";
+
+        let seq = ['gong'];
+
+        // --- BLOQUE ESPAÑOL ---
+        seq.push('atencion_favor', audioLogo);
+        if (t.modo === "SALIDAS") {
+            if (flag === 'pa5') {
+                seq.push('destino', audioLugar, 'via', numVia);
+            } else {
+                seq.push('destino', audioLugar, 'con_salida_a_las', 'h'+h, 'horas_y', 'm'+m, 'minutos', 'via', numVia);
+            }
+        } else {
+            seq.push('procedente_de', audioLugar, 'via', numVia);
+        }
+
+        // --- BLOQUE INGLÉS ---
+        seq.push('en_atencion_favor', 'en_' + audioLogo);
+        if (t.modo === "SALIDAS") {
+            if (flag === 'pa5') {
+                seq.push('en_to', 'en_' + audioLugar, 'en_' + numVia);
+            } else {
+                seq.push('en_to', 'en_' + audioLugar, 'en_scheduled_departure', 'en_h'+h, 'en_y', 'en_m'+m, 'en_' + numVia);
+            }
+        } else {
+            seq.push('en_from', 'en_' + audioLugar, 'en_' + numVia);
+        }
+
+        await playSequence(seq);
+        isSpeaking = false;
+    }
+
+    function update() {
+        const now = new Date();
+        document.getElementById('clock').innerText = now.toLocaleTimeString('es-ES', {hour12: false});
+        let db = JSON.parse(localStorage.getItem(DB_NAME)) || { trains: [] };
+        const mode = (Math.floor(now.getTime() / 10000) % 2 === 0) ? "SALIDAS" : "LLEGADAS";
+        
+        document.getElementById('board').className = "modo-" + mode;
+        document.getElementById('mode_label').innerText = mode === "SALIDAS" ? "SALIDAS / DEPARTURES" : "LLEGADAS / ARRIVALS";
+        document.getElementById('col_name').innerText = mode === "SALIDAS" ? "DESTINO" : "PROCEDENCIA";
+
+        let trenesProcesados = db.trains.map(t => {
+            const [h, m] = t.hora.split(':').map(Number);
+            let fT = new Date(); fT.setHours(h, m, 0, 0);
+            if (fT.getTime() < now.getTime() - 1800000) fT.setDate(fT.getDate() + 1);
+            return { ...t, fechaReal: fT, diff: (fT - now) / 60000 };
+        });
+
+        let filtrados = trenesProcesados.filter(t => t.modo === mode && t.diff > -2 && t.diff < 1440).sort((a,b) => a.fechaReal - b.fechaReal);
+
+        let html = '';
+        filtrados.forEach(t => {
+            if (!isSpeaking) {
+                if (t.diff <= 10 && t.diff > 9.8 && !t.pa5) triggerPA(t, 'pa5');
+                if (t.diff <= 4 && t.diff > 3.8 && !t.pa2) triggerPA(t, 'pa2');
+            }
+            const color = trainColors[t.logo.toUpperCase()] || '#444';
+            let obs = t.diff <= 2 && t.diff > 0 ? (t.modo === "SALIDAS" ? "SALIDA INMEDIATA" : "LLEGADA INMINENTE") : (t.diff <= 0 ? (t.modo === "SALIDAS" ? "TREN EN SALIDA" : "TREN EN ESTACIÓN") : "EN HORA");
+
+            html += `
+            <div class="grid row">
+                <div class="hora-v">${t.hora}</div>
+                <div class="destino-v">
+                    <div class="ciudad">${t.dest}</div>
+                    <div style="font-size:18px; opacity:0.7">${t.info || ''}</div>
+                </div>
+                <div><span class="tren-v" style="background:${color}">${t.logo}</span></div>
+                <div class="num-v">${t.num}</div>
+                <div class="via-v">${t.via || '--'}</div>
+                <div class="${t.diff <= 2 ? 'blink' : ''} obs-v">${obs}</div>
+            </div>`;
+        });
+        document.getElementById('rows').innerHTML = html;
+    }
+
+    setInterval(update, 1000);
+    update();
+</script>
+</body>
+</html>

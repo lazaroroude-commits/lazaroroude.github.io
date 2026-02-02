@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>CONTROL v40 - FULL DATABASE & EXPORT</title>
+    <style>
+        body { font-family: sans-serif; background: #1a1a1a; color: white; padding: 20px; }
+        .panel { background: #333; padding: 20px; border-radius: 10px; border: 2px solid #13ab63; margin-bottom: 20px; }
+        .panel-db { background: #2c3e50; border: 2px solid #3498db; }
+        input, select, button { padding: 12px; margin: 5px; border-radius: 5px; border: none; font-size: 14px; }
+        input[type="text"], input[type="time"], input[type="number"] { background: #444; color: white; border: 1px solid #555; }
+        .btn-add { background: #13ab63; color: white; font-weight: bold; cursor: pointer; width: 220px; }
+        .btn-db { background: #3498db; color: white; font-weight: bold; cursor: pointer; }
+        .btn-export { background: #8e44ad; color: white; font-weight: bold; cursor: pointer; }
+        .btn-import { background: #d35400; color: white; font-weight: bold; cursor: pointer; }
+        .btn-edit { background: #3498db; color: white; cursor: pointer; padding: 5px 10px; }
+        .btn-delete { background: #e74c3c; color: white; cursor: pointer; padding: 5px 10px; }
+        .tren-card { padding: 15px; margin-top: 10px; display: flex; justify-content: space-between; align-items: center; border-radius: 5px; border-left: 8px solid #f39c12; }
+        .card-SALIDAS { background: #f5f9ad; color: #004534; }
+        .card-LLEGADAS { background: #d8e5f3; color: #003366; }
+        .db-list { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; }
+        .db-item { background: #444; padding: 10px; border-radius: 5px; border: 1px solid #3498db; min-width: 150px; }
+        hr { border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 15px 0; }
+    </style>
+</head>
+<body>
+
+<div class="panel panel-db">
+    <h2>💾 GESTIÓN DE BIBLIOTECA</h2>
+    <div style="display: flex; gap: 10px; align-items: center;">
+        <input type="text" id="db_name_input" placeholder="Nombre de la sesión (ej: Sabados)" style="flex-grow: 1;">
+        <button class="btn-db" onclick="saveCurrentToLibrary()">GUARDAR EN BIBLIOTECA</button>
+    </div>
+    <div class="db-list" id="db_library"></div>
+    <hr>
+    <div style="display: flex; gap: 10px;">
+        <button class="btn-export" onclick="exportData()">📥 EXPORTAR BACKUP</button>
+        <button class="btn-import" onclick="document.getElementById('importFile').click()">📤 IMPORTAR BACKUP</button>
+        <input type="file" id="importFile" style="display:none" accept=".json" onchange="importData(event)">
+    </div>
+</div>
+
+<div class="panel">
+    <h2 id="form-title">NUEVO TREN (Megafonía Automática)</h2>
+    <input type="hidden" id="edit-id">
+    <input type="time" id="hora">
+    <input type="text" id="dest" placeholder="DESTINO (Ej: Madrid)">
+    <select id="logo">
+        <option value="AVE">AVE</option><option value="AVLO">AVLO</option><option value="IRYO">IRYO</option>
+        <option value="OUIGO">OUIGO</option><option value="ALVIA">ALVIA</option><option value="AVANT">AVANT</option>
+        <option value="MD">MEDIA DISTANCIA</option>
+    </select>
+    <input type="text" id="num" placeholder="Nº TREN">
+    <input type="text" id="via" placeholder="VÍA">
+    <input type="number" id="delay" value="0" style="width: 80px;">
+    <select id="modo">
+        <option value="SALIDAS">SALIDAS</option><option value="LLEGADAS">LLEGADAS</option>
+    </select>
+    <br>
+    <input type="text" id="info" placeholder="INFO ADICIONAL" style="width: 85%;">
+    <br>
+    <button class="btn-add" id="btn-save" onclick="saveTren()">GUARDAR TREN</button>
+    <button id="btn-cancel" style="display:none; background:#666; color:white;" onclick="cancelEdit()">CANCELAR</button>
+</div>
+
+<div id="lista"></div>
+
+<script>
+    const DB_NAME = 'ADIF_ULTIMATE_V20';
+    const LIBRARY_NAME = 'ADIF_LIBRARY';
+
+    function exportData() {
+        const fullData = { current: JSON.parse(localStorage.getItem(DB_NAME)), library: JSON.parse(localStorage.getItem(LIBRARY_NAME)) };
+        const blob = new Blob([JSON.stringify(fullData)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `ADIF_Backup.json`;
+        a.click();
+    }
+
+    function importData(event) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const data = JSON.parse(e.target.result);
+            localStorage.setItem(DB_NAME, JSON.stringify(data.current));
+            localStorage.setItem(LIBRARY_NAME, JSON.stringify(data.library));
+            render(); renderLibrary();
+        };
+        reader.readAsText(event.target.files[0]);
+    }
+
+    function saveCurrentToLibrary() {
+        const name = document.getElementById('db_name_input').value.trim();
+        if (!name) return;
+        let lib = JSON.parse(localStorage.getItem(LIBRARY_NAME)) || {};
+        let curr = JSON.parse(localStorage.getItem(DB_NAME)) || { trains: [] };
+        lib[name] = curr.trains;
+        localStorage.setItem(LIBRARY_NAME, JSON.stringify(lib));
+        renderLibrary();
+    }
+
+    function loadFromLibrary(name) {
+        let lib = JSON.parse(localStorage.getItem(LIBRARY_NAME));
+        localStorage.setItem(DB_NAME, JSON.stringify({ trains: lib[name] }));
+        render();
+    }
+
+    function deleteFromLibrary(name) {
+        if(!confirm("¿Borrar?")) return;
+        let lib = JSON.parse(localStorage.getItem(LIBRARY_NAME));
+        delete lib[name];
+        localStorage.setItem(LIBRARY_NAME, JSON.stringify(lib));
+        renderLibrary();
+    }
+
+    function renderLibrary() {
+        let lib = JSON.parse(localStorage.getItem(LIBRARY_NAME)) || {};
+        let html = '';
+        for (let n in lib) {
+            html += `<div class="db-item"><b>${n}</b><br><button onclick="loadFromLibrary('${n}')">CARGAR</button> <button onclick="deleteFromLibrary('${n}')">X</button></div>`;
+        }
+        document.getElementById('db_library').innerHTML = html;
+    }
+
+    function saveTren() {
+        let db = JSON.parse(localStorage.getItem(DB_NAME)) || { trains: [] };
+        const id = document.getElementById('edit-id').value;
+        const trenData = {
+            id: id ? parseInt(id) : Date.now(),
+            hora: document.getElementById('hora').value,
+            dest: document.getElementById('dest').value,
+            logo: document.getElementById('logo').value,
+            num: document.getElementById('num').value,
+            via: document.getElementById('via').value,
+            modo: document.getElementById('modo').value,
+            info: document.getElementById('info').value,
+            delay: parseInt(document.getElementById('delay').value) || 0,
+            pa5: false, pa2: false, pa_manual: false
+        };
+        if (id) { const idx = db.trains.findIndex(t => t.id == id); db.trains[idx] = trenData; }
+        else { db.trains.push(trenData); }
+        localStorage.setItem(DB_NAME, JSON.stringify(db));
+        cancelEdit(); render();
+    }
+
+    function prepareEdit(id) {
+        let db = JSON.parse(localStorage.getItem(DB_NAME));
+        const t = db.trains.find(t => t.id == id);
+        document.getElementById('edit-id').value = t.id;
+        document.getElementById('hora').value = t.hora;
+        document.getElementById('dest').value = t.dest;
+        document.getElementById('logo').value = t.logo;
+        document.getElementById('num').value = t.num;
+        document.getElementById('via').value = t.via;
+        document.getElementById('modo').value = t.modo;
+        document.getElementById('info').value = t.info || "";
+        document.getElementById('delay').value = t.delay;
+        document.getElementById('form-title').innerText = "EDITANDO TREN";
+        document.getElementById('btn-save').innerText = "ACTUALIZAR";
+        document.getElementById('btn-cancel').style.display = "inline";
+    }
+
+    function cancelEdit() {
+        document.getElementById('edit-id').value = "";
+        document.getElementById('form-title').innerText = "NUEVO TREN";
+        document.getElementById('btn-cancel').style.display = "none";
+        ['hora','dest','num','via','info'].forEach(id => document.getElementById(id).value = "");
+    }
+
+    function deleteTren(id) {
+        let db = JSON.parse(localStorage.getItem(DB_NAME));
+        db.trains = db.trains.filter(t => t.id !== id);
+        localStorage.setItem(DB_NAME, JSON.stringify(db));
+        render();
+    }
+
+    function render() {
+        let db = JSON.parse(localStorage.getItem(DB_NAME)) || { trains: [] };
+        let html = '';
+        db.trains.sort((a,b) => a.hora.localeCompare(b.hora)).forEach(t => {
+            const cl = t.modo === "SALIDAS" ? "card-SALIDAS" : "card-LLEGADAS";
+            html += `<div class="tren-card ${cl}"><div><b>${t.hora} - ${t.dest}</b></div>
+                <div><button onclick="prepareEdit(${t.id})">EDIT</button><button onclick="deleteTren(${t.id})">X</button></div></div>`;
+        });
+        document.getElementById('lista').innerHTML = html;
+    }
+
+    render(); renderLibrary();
+</script>
+</body>
+</html>
